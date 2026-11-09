@@ -1,0 +1,7 @@
+﻿# Local PaperSearch state
+.git
+.env
+.venv
+artifacts
+**/__pycache__
+.pytest_cache

@@ -1,0 +1,4 @@
+﻿{"id":"river","source_version":1,"source_updated_at":"2025-01-01T00:00:00Z","title":"River graph models","abstract":"Graph neural networks model river flow.","categories":["cs.LG"]}
+{"id":"vision","source_version":1,"source_updated_at":"2025-01-01T00:00:00Z","title":"Vision-language models for diagrams","abstract":"A study of diagram retrieval.","categories":["cs.CV"]}
+{"id":"cache","source_version":1,"source_updated_at":"2025-01-01T00:00:00Z","title":"KV cache compression","abstract":"Reducing inference memory."}
+{"id":"broken","title":

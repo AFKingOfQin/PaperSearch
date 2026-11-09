@@ -1,0 +1,9 @@
+﻿# Local PaperSearch state
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+artifacts/
+*.egg-info/
+build/

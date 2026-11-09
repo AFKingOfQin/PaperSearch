@@ -1,0 +1,101 @@
+﻿name: papersearch-rebuild
+
+x-runtime: &runtime
+  MYSQL_HOST: mysql
+  MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}
+  KAFKA_BOOTSTRAP: kafka:9092
+  ARTIFACT_DIR: /artifacts
+
+services:
+  mysql:
+    image: mysql:8.4.13
+    environment:
+      MYSQL_DATABASE: papersearch
+      MYSQL_USER: papersearch
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}
+    volumes: [mysql-data:/var/lib/mysql]
+    healthcheck:
+      test: ["CMD-SHELL", 'MYSQL_PWD="$$MYSQL_PASSWORD" mysql -h 127.0.0.1 -u "$$MYSQL_USER" "$$MYSQL_DATABASE" -e "SELECT 1"']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    mem_limit: 1g
+  kafka:
+    image: apache/kafka:4.1.2
+    environment:
+      CLUSTER_ID: 7vQpYv_4RkSzt14LWjLjlw
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_NUM_PARTITIONS: "3"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_RETENTION_HOURS: "24"
+      KAFKA_LOG_RETENTION_BYTES: "134217728"
+      KAFKA_HEAP_OPTS: -Xms256m -Xmx384m
+    volumes: [kafka-data:/var/lib/kafka/data]
+    healthcheck:
+      test: ["CMD-SHELL", "KAFKA_HEAP_OPTS='-Xms16m -Xmx96m' /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+    mem_limit: 1g
+  cli:
+    profiles: [tools]
+    build: {context: ., target: core}
+    environment: *runtime
+    volumes:
+      - ${ARTIFACT_DIR:-./artifacts}:/artifacts
+      - ./tests/fixtures:/fixtures:ro
+    command: ["--help"]
+    mem_limit: 768m
+  api:
+    profiles: [review]
+    build: {context: ., target: review}
+    environment: *runtime
+    volumes:
+      - ${ARTIFACT_DIR:-./artifacts}:/artifacts:ro
+    entrypoint: ["python", "-m", "uvicorn", "papersearch.api:app", "--host", "0.0.0.0"]
+    ports: ["127.0.0.1:${REVIEW_API_PORT:-18080}:8000"]
+    mem_limit: 1g
+  ui:
+    profiles: [review]
+    build: {context: ., target: review}
+    environment:
+      PAPERSEARCH_API: http://api:8000
+      PAPERSEARCH_PUBLIC_API: http://127.0.0.1:${REVIEW_API_PORT:-18080}
+      STREAMLIT_BROWSER_GATHER_USAGE_STATS: "false"
+    entrypoint: ["python", "-m", "streamlit", "run", "src/papersearch/reviewer.py", "--server.address=0.0.0.0", "--server.headless=true"]
+    ports: ["127.0.0.1:${REVIEW_UI_PORT:-18510}:8501"]
+    mem_limit: 512m
+  embedding:
+    profiles: [embedding]
+    build: {context: ., target: review}
+    environment: *runtime
+    volumes: ["${ARTIFACT_DIR:-./artifacts}:/artifacts"]
+    command: ["embed"]
+    cpus: 2
+    mem_limit: 2g
+  spark:
+    profiles: [batch]
+    image: spark:4.1.1-scala2.13-java17-python3-ubuntu
+    entrypoint: ["/opt/spark/bin/spark-submit"]
+    command: ["--version"]
+    environment: {SPARK_LOCAL_IP: "127.0.0.1"}
+    network_mode: none
+    volumes:
+      - ./src/papersearch/batch:/jobs:ro
+      - ${ARTIFACT_DIR:-./artifacts}:/artifacts
+    cpus: 2
+    mem_limit: 3g
+
+volumes:
+  mysql-data:
+  kafka-data:
