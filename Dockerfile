@@ -1,6 +1,6 @@
-﻿FROM python:3.14.4-slim-bookworm AS core
+FROM python:3.14.4-slim-bookworm AS core
 WORKDIR /app
-COPY pyproject.toml .
+COPY pyproject.toml alembic.ini ./
 COPY src src
 COPY migrations migrations
 RUN python -m pip install --no-cache-dir .

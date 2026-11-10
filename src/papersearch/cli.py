@@ -1,4 +1,3 @@
-﻿# AI-generated code (Codex): pipeline commands.
 import argparse
 
 

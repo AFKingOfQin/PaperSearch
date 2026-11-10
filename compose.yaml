@@ -1,4 +1,4 @@
-﻿name: papersearch-rebuild
+name: papersearch-rebuild
 
 x-runtime: &runtime
   MYSQL_HOST: mysql

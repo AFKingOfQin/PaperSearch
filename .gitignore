@@ -1,4 +1,4 @@
-﻿# Local PaperSearch state
+# Local PaperSearch state
 .env
 .venv/
 __pycache__/
