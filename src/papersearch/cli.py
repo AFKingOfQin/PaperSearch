@@ -6,6 +6,7 @@ from pathlib import Path
 
 from . import stream
 from .database import connect
+from .snapshot import publish_snapshot, snapshots_root
 
 
 def main():
@@ -25,6 +26,7 @@ def main():
             command.add_argument("--replay", action="store_true")
         if name == "consume":
             command.add_argument("--drain", action="store_true")
+    commands.add_parser("snapshot")
     args = parser.parse_args()
     root = Path(os.environ.get("ARTIFACT_DIR", "artifacts"))
     match args.command:
@@ -36,6 +38,8 @@ def main():
             stream.publish(args.folder, args.topic, args.group, args.max_lag, args.replay)
         case "consume":
             stream.consume(connect(), args.topic, args.group, args.drain)
+        case "snapshot":
+            print(json.dumps(publish_snapshot(connect(), snapshots_root())))
         case "lag":
             with closing(stream.group_reader(args.group)) as reader:
                 print(json.dumps(stream.offsets(reader, args.topic)))
