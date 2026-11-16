@@ -3,6 +3,8 @@ import os
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL
 
+from .embeddings import enqueue
+from .encoder import eligible
 from .records import canonical, revision_values
 
 
@@ -66,6 +68,8 @@ def apply_revision(conn, revision):
     if changed:
         conn.execute(text("UPDATE pipeline_state SET generation=generation+1 WHERE id=1"))
     if winner == revision_id:
+        if eligible(revision.paper_id, {"published": revision.payload.published, "categories": revision.payload.categories}):
+            enqueue(conn, text_id)
         return revision_id, "applied"
     variants = conn.scalar(text("""
         SELECT COUNT(*) FROM revisions

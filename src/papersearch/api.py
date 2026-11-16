@@ -10,13 +10,16 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from .database import connect
+from .encoder import MAX_TOKENS
 from .lexical import search_lexical
 from .reviews import CURRENT_DECISIONS, ReviewConflict, create_project, read_decision, save_decision
+from .semantic import SemanticReader
 from .snapshot import active_snapshot, snapshots_root
 
 app = FastAPI(title="PaperSearch")
 engine = connect()
 root = snapshots_root()
+semantic_reader = SemanticReader()
 Paper = Annotated[str, Query(min_length=1, max_length=128)]
 
 
@@ -63,6 +66,7 @@ def new_project(body: Project):
 def search(
     project: UUID,
     q: Annotated[str, Query(min_length=1, max_length=512)],
+    ranker: Literal["bm25", "semantic"] = "bm25",
     field: Literal["all", "title", "abstract"] = "all",
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -76,11 +80,21 @@ def search(
     snapshot_id = manifest["snapshot_id"]
     if snapshot is not None and snapshot != snapshot_id:
         raise HTTPException(409, "A new snapshot is active. Start the search again.")
+    if ranker == "semantic" and field != "all":
+        raise HTTPException(422, "Semantic search uses both title and abstract")
+    tokens = None
     try:
-        hits, more = search_lexical(root / snapshot_id / "lexical.sqlite", q, field, offset, limit)
+        folder = root / snapshot_id
+        if ranker == "semantic":
+            hits, more, tokens = semantic_reader.search(folder, manifest, q, offset, limit)
+        else:
+            hits, more = search_lexical(folder / "lexical.sqlite", q, field, offset, limit)
+    except (LookupError, FileNotFoundError) as exc:
+        raise HTTPException(503, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    return dict(results=hits, has_more=more, snapshot_id=snapshot_id, coverage=manifest["coverage"])
+    return dict(results=hits, has_more=more, snapshot_id=snapshot_id, coverage=manifest["coverage"],
+                ranker=ranker, query_truncated=tokens is not None and tokens > MAX_TOKENS)
 
 
 @app.get("/papers/detail")

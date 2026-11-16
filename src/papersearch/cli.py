@@ -6,6 +6,7 @@ from pathlib import Path
 
 from . import stream
 from .database import connect
+from .embeddings import backfill, embed
 from .snapshot import publish_snapshot, snapshots_root
 
 
@@ -27,6 +28,9 @@ def main():
         if name == "consume":
             command.add_argument("--drain", action="store_true")
     commands.add_parser("snapshot")
+    worker = commands.add_parser("embed")
+    worker.add_argument("--limit", type=int, default=1024)
+    worker.add_argument("--backfill", action="store_true")
     args = parser.parse_args()
     root = Path(os.environ.get("ARTIFACT_DIR", "artifacts"))
     match args.command:
@@ -40,6 +44,11 @@ def main():
             stream.consume(connect(), args.topic, args.group, args.drain)
         case "snapshot":
             print(json.dumps(publish_snapshot(connect(), snapshots_root())))
+        case "embed":
+            engine = connect()
+            if args.backfill:
+                backfill(engine)
+            print(json.dumps({"embedded": embed(engine, args.limit)}))
         case "lag":
             with closing(stream.group_reader(args.group)) as reader:
                 print(json.dumps(stream.offsets(reader, args.topic)))

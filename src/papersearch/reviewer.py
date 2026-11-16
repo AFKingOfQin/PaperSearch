@@ -47,6 +47,8 @@ if active is None:
     st.stop()
 coverage = active["coverage"]
 st.caption(f"{status['metadata']:,} current papers · {coverage['lexical']:,} lexical · {coverage['semantic']:,} semantic")
+if "semantic_eligible" in coverage:
+    st.caption(f"Semantic index covers {coverage['semantic']:,} of {coverage['semantic_eligible']:,} eligible papers.")
 if status["generation"] != active["generation"]:
     st.warning("New metadata is available. Search shows the published revisions.")
 if not projects:
@@ -55,15 +57,18 @@ if not projects:
 
 prefix = f"/projects/{project}"
 query = st.text_input("Search papers")
-field = st.selectbox("Search in", ["all", "title", "abstract"])
+ranker = st.selectbox("Ranking", ["bm25", "semantic"])
+field = st.selectbox("Search in", ["all", "title", "abstract"]) if ranker == "bm25" else "all"
 if not query.strip():
     st.stop()
-search_key = (project, query, field)
+search_key = (project, query, ranker, field)
 if st.session_state.get("search_key") != search_key:
     st.session_state.search_key = search_key
     st.session_state.pop("page", None)
 offset, snapshot = st.session_state.get("page", (0, None))
-page = call("GET", prefix + "/search", params=dict(q=query, field=field, offset=offset, limit=10, snapshot=snapshot))
+page = call("GET", prefix + "/search", params=dict(q=query, ranker=ranker, field=field, offset=offset, limit=10, snapshot=snapshot))
+if page["query_truncated"]:
+    st.caption("The semantic query was shortened to 128 tokens.")
 hits = {row["revision_id"]: row for row in page["results"]}
 if not hits:
     st.info("No matches.")
