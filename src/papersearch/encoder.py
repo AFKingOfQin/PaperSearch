@@ -14,7 +14,10 @@ def eligible(paper, payload):
     if paper.startswith("fixture:"):
         return True
     recent = (payload["published"] or "") >= "2024-01-01"
-    cs_or_ml = any(category.startswith("cs.") or category == "stat.ML" for category in payload["categories"])
+    cs_or_ml = any(
+        category.startswith("cs.") or category == "stat.ML"
+        for category in payload["categories"]
+    )
     return (recent and cs_or_ml) or zlib.crc32(paper.encode("utf-8")) % 100 < 5
 
 
@@ -31,7 +34,12 @@ class Encoder:
         directory = Path(
             directory
             or os.environ.get(
-                "PAPERSEARCH_MODEL_DIR", str(Path(os.environ.get("ARTIFACT_DIR", "artifacts")) / "models" / "bge-small-en-v1.5")
+                "PAPERSEARCH_MODEL_DIR",
+                str(
+                    Path(os.environ.get("ARTIFACT_DIR", "artifacts"))
+                    / "models"
+                    / "bge-small-en-v1.5"
+                ),
             )
         )
         for name in ("tokenizer.json", "model.onnx"):

@@ -36,7 +36,11 @@ def utc(value):
     stamp = datetime.fromisoformat(value)
     if stamp.tzinfo is None:
         raise RecordError("missing_timezone")
-    return stamp.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+    return (
+        stamp.astimezone(timezone.utc)
+        .isoformat(timespec="microseconds")
+        .replace("+00:00", "Z")
+    )
 
 
 def iso_day(value):
@@ -91,7 +95,11 @@ def validate_url(value):
     if re.search(r"[\s\x00-\x1f\x7f\\]", value):
         raise RecordError("invalid_url")
     parts = urlsplit(value)
-    if parts.scheme not in {"http", "https"} or not parts.hostname or parts.username is not None:
+    if (
+        parts.scheme not in {"http", "https"}
+        or not parts.hostname
+        or parts.username is not None
+    ):
         raise RecordError("invalid_url")
     return value
 
@@ -197,12 +205,16 @@ def parse_record(raw: bytes, fmt: str) -> Revision:
         paper, revision, updated, payload = snapshot_record(row)
     elif fmt == "fixture":
         identifier = row.get("id")
-        if not isinstance(identifier, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,79}", identifier):
+        if not isinstance(identifier, str) or not re.fullmatch(
+            r"[a-z0-9][a-z0-9_-]{0,79}", identifier
+        ):
             raise RecordError("invalid_paper_id")
         paper = "fixture:" + identifier
         revision = version(row.get("source_version"))
         updated = utc(row.get("source_updated_at"))
-        payload = Payload.parse({"source_url": "https://example.invalid/papers/" + identifier, **row})
+        payload = Payload.parse(
+            {"source_url": "https://example.invalid/papers/" + identifier, **row}
+        )
     else:
         raise RecordError("invalid_format")
     return Revision(paper, revision or 0, updated, payload)

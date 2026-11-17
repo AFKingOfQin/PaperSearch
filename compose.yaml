@@ -90,6 +90,7 @@ services:
     command: ["--version"]
     environment: {SPARK_LOCAL_IP: "127.0.0.1"}
     network_mode: none
+    hostname: localhost
     volumes:
       - ./src/papersearch/batch:/jobs:ro
       - ${ARTIFACT_DIR:-./artifacts}:/artifacts

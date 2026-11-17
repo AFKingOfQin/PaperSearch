@@ -36,7 +36,9 @@ TABLES = {
 
 def upgrade():
     for name, columns in TABLES.items():
-        op.execute(f"CREATE TABLE {name} ({columns}) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+        op.execute(
+            f"CREATE TABLE {name} ({columns}) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+        )
     op.execute("INSERT INTO pipeline_state(id) VALUES(1)")
 
 

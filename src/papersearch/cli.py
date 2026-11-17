@@ -7,6 +7,7 @@ from pathlib import Path
 from . import stream
 from .database import connect
 from .embeddings import backfill, embed
+from .history import export_history
 from .snapshot import publish_snapshot, snapshots_root
 
 
@@ -31,6 +32,9 @@ def main():
     worker = commands.add_parser("embed")
     worker.add_argument("--limit", type=int, default=1024)
     worker.add_argument("--backfill", action="store_true")
+    history = commands.add_parser("export-history")
+    history.add_argument("output", type=Path)
+    history.add_argument("--after-revision", type=int, default=0)
     args = parser.parse_args()
     root = Path(os.environ.get("ARTIFACT_DIR", "artifacts"))
     match args.command:
@@ -39,7 +43,9 @@ def main():
         case "topic":
             stream.init_topic(args.topic)
         case "publish":
-            stream.publish(args.folder, args.topic, args.group, args.max_lag, args.replay)
+            stream.publish(
+                args.folder, args.topic, args.group, args.max_lag, args.replay
+            )
         case "consume":
             stream.consume(connect(), args.topic, args.group, args.drain)
         case "snapshot":
@@ -49,6 +55,8 @@ def main():
             if args.backfill:
                 backfill(engine)
             print(json.dumps({"embedded": embed(engine, args.limit)}))
+        case "export-history":
+            export_history(connect(), args.output, args.after_revision)
         case "lag":
             with closing(stream.group_reader(args.group)) as reader:
                 print(json.dumps(stream.offsets(reader, args.topic)))

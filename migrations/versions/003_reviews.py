@@ -36,7 +36,9 @@ TABLES = {
 def upgrade():
     op.execute("ALTER TABLE pipeline_state ADD COLUMN active_snapshot CHAR(32) NULL")
     for name, columns in TABLES.items():
-        op.execute(f"CREATE TABLE {name} ({columns}) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+        op.execute(
+            f"CREATE TABLE {name} ({columns}) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+        )
 
 
 def downgrade():

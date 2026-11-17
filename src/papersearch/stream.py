@@ -58,8 +58,12 @@ def init_topic(topic):
 
 def group_reader(group):
     return KafkaConsumer(
-        bootstrap_servers=broker_address(), group_id=group, enable_auto_commit=False,
-        auto_offset_reset="earliest", allow_auto_create_topics=False, max_poll_records=16,
+        bootstrap_servers=broker_address(),
+        group_id=group,
+        enable_auto_commit=False,
+        auto_offset_reset="earliest",
+        allow_auto_create_topics=False,
+        max_poll_records=16,
     )
 
 
@@ -74,7 +78,9 @@ def offsets(reader, topic):
     for part in parts:
         committed = reader.committed(part) or 0
         if not starts[part] <= committed <= ends[part]:
-            raise ValueError("The group offset is outside retained Kafka data. Replay to a new topic and group.")
+            raise ValueError(
+                "The group offset is outside retained Kafka data. Replay to a new topic and group."
+            )
         lag[part.partition] = ends[part] - committed
     return lag
 
@@ -95,16 +101,22 @@ def publish(folder, topic, group=GROUP, max_lag=4096, replay=False):
     checkpoint = folder / ("ack-" + topic + ".json")
     if replay:
         atomic_json(checkpoint, 0)
-    last = json.loads(checkpoint.read_text(encoding="utf-8")) if checkpoint.exists() else 0
+    last = (
+        json.loads(checkpoint.read_text(encoding="utf-8")) if checkpoint.exists() else 0
+    )
     with (
         closing(group_reader(group)) as reader,
-        closing(KafkaProducer(bootstrap_servers=broker_address(), acks="all")) as producer,
+        closing(
+            KafkaProducer(bootstrap_servers=broker_address(), acks="all")
+        ) as producer,
         closing(raw_lines(folder / "records.jsonl")) as records,
     ):
         remaining = islice(records, last, None)
         while batch := list(islice(remaining, min(WINDOW, max_lag))):
             if sum(offsets(reader, topic).values()) + len(batch) > max_lag:
-                raise ValueError("Consumer lag limit reached. Drain the group and resume publication.")
+                raise ValueError(
+                    "Consumer lag limit reached. Drain the group and resume publication."
+                )
             pending = []
             for number, raw in batch:
                 key = None
@@ -114,12 +126,15 @@ def publish(folder, topic, group=GROUP, max_lag=4096, replay=False):
                     except INPUT_ERRORS:
                         pass  # The consumer records the durable rejection.
                 headers = [
-                    ("format", fmt.encode()), ("archive", folder.name.encode()),
+                    ("format", fmt.encode()),
+                    ("archive", folder.name.encode()),
                     ("line", str(number).encode()),
                 ]
                 if raw is None:
                     headers.append(("oversize", b"1"))
-                pending.append(producer.send(topic, key=key, value=raw or b"", headers=headers))
+                pending.append(
+                    producer.send(topic, key=key, value=raw or b"", headers=headers)
+                )
             for acknowledgement in pending:
                 acknowledgement.get(timeout=30)
             atomic_json(checkpoint, batch[-1][0])
@@ -138,13 +153,22 @@ def apply_delivery(engine, record, group):
             raise RecordError("invalid_paper_key")
     except INPUT_ERRORS as exc:
         with engine.begin() as conn:
-            conn.execute(text("""
+            conn.execute(
+                text("""
                 INSERT INTO quarantine(group_id,topic,partition_id,offset_id,source_location,reason,raw)
                 VALUES(:group,:topic,:part,:offset,:location,:reason,UNHEX(:raw))
                 ON DUPLICATE KEY UPDATE offset_id=offset_id
-            """), dict(group=group, topic=record.topic, part=record.partition, offset=record.offset,
-                        location=f"{location}:{line}"[:320], reason=str(exc)[:255],
-                        raw=raw[:MAX_LINE_BYTES].hex()))
+            """),
+                dict(
+                    group=group,
+                    topic=record.topic,
+                    part=record.partition,
+                    offset=record.offset,
+                    location=f"{location}:{line}"[:320],
+                    reason=str(exc)[:255],
+                    raw=raw[:MAX_LINE_BYTES].hex(),
+                ),
+            )
         return "rejected"
     with engine.begin() as conn:
         return apply_revision(conn, revision)[1]
@@ -160,9 +184,13 @@ def consume(engine, topic, group=GROUP, drain=False):
                 following = reader.committed(part) or 0
                 for record in messages:
                     if record.offset != following:
-                        raise ValueError(f"Unexpected Kafka offset for {part}: {record.offset}, expected {following}")
+                        raise ValueError(
+                            f"Unexpected Kafka offset for {part}: {record.offset}, expected {following}"
+                        )
                     apply_delivery(engine, record, group)
                     following += 1
-                    reader.commit({part: OffsetAndMetadata(following, "", -1)}, timeout_ms=10000)
+                    reader.commit(
+                        {part: OffsetAndMetadata(following, "", -1)}, timeout_ms=10000
+                    )
             if drain and not polled and not any(offsets(reader, topic).values()):
                 return

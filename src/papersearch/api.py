@@ -12,7 +12,13 @@ from sqlalchemy import text
 from .database import connect
 from .encoder import MAX_TOKENS
 from .lexical import search_lexical
-from .reviews import CURRENT_DECISIONS, ReviewConflict, create_project, read_decision, save_decision
+from .reviews import (
+    CURRENT_DECISIONS,
+    ReviewConflict,
+    create_project,
+    read_decision,
+    save_decision,
+)
 from .semantic import SemanticReader
 from .snapshot import active_snapshot, snapshots_root
 
@@ -36,7 +42,13 @@ class Decision(BaseModel):
 
 
 def check_project(conn, project):
-    if conn.scalar(text("SELECT 1 FROM review_projects WHERE project_id=:id"), {"id": str(project)}) is None:
+    if (
+        conn.scalar(
+            text("SELECT 1 FROM review_projects WHERE project_id=:id"),
+            {"id": str(project)},
+        )
+        is None
+    ):
         raise HTTPException(404, "Unknown project")
 
 
@@ -44,14 +56,20 @@ def check_project(conn, project):
 def status():
     with engine.connect() as conn:
         generation, active = active_snapshot(conn, root)
-        metadata = conn.scalar(text("SELECT COUNT(*) FROM papers WHERE current_revision_id IS NOT NULL"))
+        metadata = conn.scalar(
+            text("SELECT COUNT(*) FROM papers WHERE current_revision_id IS NOT NULL")
+        )
     return dict(generation=generation, metadata=metadata, active=active)
 
 
 @app.get("/projects")
 def projects():
     with engine.connect() as conn:
-        rows = conn.execute(text("SELECT project_id,topic,criteria FROM review_projects ORDER BY topic,project_id"))
+        rows = conn.execute(
+            text(
+                "SELECT project_id,topic,criteria FROM review_projects ORDER BY topic,project_id"
+            )
+        )
         return [dict(row) for row in rows.mappings()]
 
 
@@ -86,32 +104,51 @@ def search(
     try:
         folder = root / snapshot_id
         if ranker == "semantic":
-            hits, more, tokens = semantic_reader.search(folder, manifest, q, offset, limit)
+            hits, more, tokens = semantic_reader.search(
+                folder, manifest, q, offset, limit
+            )
         else:
-            hits, more = search_lexical(folder / "lexical.sqlite", q, field, offset, limit)
+            hits, more = search_lexical(
+                folder / "lexical.sqlite", q, field, offset, limit
+            )
     except (LookupError, FileNotFoundError) as exc:
         raise HTTPException(503, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
-    return dict(results=hits, has_more=more, snapshot_id=snapshot_id, coverage=manifest["coverage"],
-                ranker=ranker, query_truncated=tokens is not None and tokens > MAX_TOKENS)
+    return dict(
+        results=hits,
+        has_more=more,
+        snapshot_id=snapshot_id,
+        coverage=manifest["coverage"],
+        ranker=ranker,
+        query_truncated=tokens is not None and tokens > MAX_TOKENS,
+    )
 
 
 @app.get("/papers/detail")
 def detail(paper: Paper, revision_id: Annotated[int, Query(gt=0)]):
     with engine.connect() as conn:
-        selected = conn.execute(text("""
+        selected = conn.execute(
+            text("""
             SELECT r.payload,p.current_revision_id FROM revisions r JOIN papers p USING(paper_id)
             WHERE r.paper_id=:paper AND r.revision_id=:revision
-        """), dict(paper=paper, revision=revision_id)).first()
+        """),
+            dict(paper=paper, revision=revision_id),
+        ).first()
         if selected is None:
             raise HTTPException(404, "Unknown paper revision")
-        revisions = conn.execute(text("""
+        revisions = conn.execute(
+            text("""
             SELECT revision_id,version_rank,source_updated_at FROM revisions
             WHERE paper_id=:paper ORDER BY version_rank DESC,source_updated_at DESC,revision_id
-        """), {"paper": paper}).mappings()
-        return dict(payload=json.loads(selected.payload), current_revision_id=selected.current_revision_id,
-                    revisions=[dict(row) for row in revisions])
+        """),
+            {"paper": paper},
+        ).mappings()
+        return dict(
+            payload=json.loads(selected.payload),
+            current_revision_id=selected.current_revision_id,
+            revisions=[dict(row) for row in revisions],
+        )
 
 
 @app.put("/projects/{project}/decision")
@@ -119,8 +156,15 @@ def decide(project: UUID, paper: Paper, body: Decision):
     with engine.begin() as conn:
         check_project(conn, project)
         try:
-            history = save_decision(conn, str(project), paper, body.revision_id, body.label,
-                                    body.note, str(body.request_id))
+            history = save_decision(
+                conn,
+                str(project),
+                paper,
+                body.revision_id,
+                body.label,
+                body.note,
+                str(body.request_id),
+            )
         except LookupError as exc:
             raise HTTPException(404, str(exc)) from exc
         except ReviewConflict as exc:
@@ -143,18 +187,39 @@ def export(project: UUID):
     def rows():
         buffer = io.StringIO()
         writer = csv.writer(buffer)
-        writer.writerow(("paper_id", "history_id", "revision_id", "label", "note", "saved_at", "needs_reconsideration"))
+        writer.writerow(
+            (
+                "paper_id",
+                "history_id",
+                "revision_id",
+                "label",
+                "note",
+                "saved_at",
+                "needs_reconsideration",
+            )
+        )
         yield buffer.getvalue()
-        with engine.connect().execution_options(isolation_level="REPEATABLE READ") as conn:
+        with engine.connect().execution_options(
+            isolation_level="REPEATABLE READ"
+        ) as conn:
             after = ""
-            while page := conn.execute(text(
-                CURRENT_DECISIONS + " AND d.paper_id>:after ORDER BY d.paper_id LIMIT 128"
-            ), dict(project=str(project), after=after)).all():
+            while page := conn.execute(
+                text(
+                    CURRENT_DECISIONS
+                    + " AND d.paper_id>:after ORDER BY d.paper_id LIMIT 128"
+                ),
+                dict(project=str(project), after=after),
+            ).all():
                 buffer.seek(0)
                 buffer.truncate()
                 writer.writerows(page)
                 yield buffer.getvalue()
                 after = page[-1].paper_id
 
-    return StreamingResponse(rows(), media_type="text/csv",
-                             headers={"Content-Disposition": f'attachment; filename="screening-{project}.csv"'})
+    return StreamingResponse(
+        rows(),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="screening-{project}.csv"'
+        },
+    )
