@@ -1,4 +1,4 @@
-name: papersearch-rebuild
+name: papersearch-local
 
 x-runtime: &runtime
   MYSQL_HOST: mysql
@@ -64,6 +64,11 @@ services:
       - ${ARTIFACT_DIR:-./artifacts}:/artifacts:ro
     entrypoint: ["python", "-m", "uvicorn", "papersearch.api:app", "--host", "0.0.0.0"]
     ports: ["127.0.0.1:${REVIEW_API_PORT:-18080}:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/status', timeout=3).close()"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
     mem_limit: 1g
   ui:
     profiles: [review]
@@ -91,9 +96,10 @@ services:
     environment: {SPARK_LOCAL_IP: "127.0.0.1"}
     network_mode: none
     hostname: localhost
+    user: "0:0"
     volumes:
       - ./src/papersearch/batch:/jobs:ro
-      - ${ARTIFACT_DIR:-./artifacts}:/artifacts
+      - ${ARTIFACT_DIR:-./artifacts}/batch:/artifacts/batch
     cpus: 2
     mem_limit: 3g
 
