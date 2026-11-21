@@ -16,14 +16,14 @@ $batch = docker compose run --rm --no-deps cli archive /fixtures/papers.jsonl --
 docker compose run --rm --no-deps cli publish papers $batch
 docker compose run --rm --no-deps cli consume papers --drain
 docker compose run --rm --no-deps cli snapshot
-docker compose up -d api ui
+docker compose up -d --wait api ui
 ```
 
 Open the [reviewer](http://127.0.0.1:18510). Create a project, search for `river`, and save a label and note. The sample has three valid papers and one malformed input. Run `docker compose run --rm --no-deps cli publish papers $batch --replay` followed by `consume papers --drain` to replay the batch. Use `/fixtures/updates.jsonl` in the same archive, publish, consume, and snapshot sequence to see the river revision. The original decision remains in history and is flagged for reconsideration.
 
 For an arXiv JSONL dump, put the file in `artifacts/`, pass its container path under `/artifacts/` to `archive`, and use `--format arxiv`. On a large batch, run `consume papers` in a second terminal while publishing. If the lag limit pauses publication, run the consumer and repeat `publish` on the same archive. Use `lag papers` to view uncommitted records per partition.
 
-If Docker reports exhausted address pools, add an untracked `compose.override.yaml` with an unused local subnet under `networks.default.ipam.config`. Check existing Docker networks and host routes before choosing it. To stop the app and keep its MySQL and Kafka volumes, run `docker compose stop`.
+If Docker reports exhausted address pools, add an untracked `compose.override.yaml` with an unused local subnet under `networks.default.ipam.config`. Check existing Docker networks and host routes before choosing it. To stop the app and keep its MySQL and Kafka volumes, run `docker compose --profile '*' stop`.
 
 ## Enable CPU semantic search
 
