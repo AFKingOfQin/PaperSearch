@@ -3,6 +3,7 @@ import json
 import sqlite3
 from contextlib import closing
 from dataclasses import asdict
+from hashlib import sha256
 from pathlib import Path
 from struct import pack
 from tempfile import TemporaryDirectory
@@ -19,6 +20,43 @@ from papersearch.records import parse_record
 from papersearch.snapshot import active_snapshot
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
+
+
+def write_index(path, rows):
+    with closing(sqlite3.connect(path)) as index, index:
+        index.execute(
+            "CREATE VIRTUAL TABLE documents USING fts5(title,abstract,paper_id UNINDEXED)"
+        )
+        index.executemany(
+            "INSERT INTO documents(rowid,title,abstract,paper_id) VALUES(:row_id,:title,:abstract,:paper_id)",
+            rows,
+        )
+
+
+def import_state(engine):
+    with engine.connect() as conn:
+        progress = conn.execute(text(bootstrap.PROGRESS)).one()
+        snapshot = conn.execute(
+            text("SELECT generation,active_snapshot FROM pipeline_state WHERE id=1")
+        ).one()
+        return progress, snapshot
+
+
+def reject_swapped_index(engine, folder, replacement):
+    before = import_state(engine)
+    index = folder / "lexical.sqlite"
+    original = index.read_bytes()
+    assert len(replacement) == len(original) and replacement != original
+    index.write_bytes(replacement)
+    try:
+        bootstrap.bootstrap(engine, folder)
+    except ValueError as error:
+        assert "lexical.sqlite" in str(error) and "SHA-256" in str(error)
+    else:
+        raise AssertionError("Expected bootstrap to reject the swapped SQLite index")
+    finally:
+        index.write_bytes(original)
+    assert import_state(engine) == before
 
 
 def main():
@@ -48,7 +86,6 @@ def main():
             recipe=bootstrap.PUBLISHED_RECIPE,
             coverage=dict(metadata=2, lexical=2, semantic=2),
         )
-        (folder / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
         pq.write_table(
             pa.Table.from_pylist(rows), folder / "corpus.parquet", row_group_size=1
         )
@@ -65,14 +102,21 @@ def main():
             folder / "semantic.parquet",
             row_group_size=1,
         )
-        with closing(sqlite3.connect(folder / "lexical.sqlite")) as index, index:
-            index.execute(
-                "CREATE VIRTUAL TABLE documents USING fts5(title,abstract,paper_id UNINDEXED)"
+        write_index(folder / "lexical.sqlite", rows)
+        manifest["files"] = {}
+        for name in ("lexical.sqlite", "corpus.parquet", "semantic.parquet"):
+            content = (folder / name).read_bytes()
+            manifest["files"][name] = dict(
+                bytes=len(content), sha256=sha256(content).hexdigest()
             )
-            index.executemany(
-                "INSERT INTO documents(rowid,title,abstract,paper_id) VALUES(:row_id,:title,:abstract,:paper_id)",
-                rows,
-            )
+        (folder / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+        replacement = folder / "other.sqlite"
+        write_index(
+            replacement,
+            [{**row, "row_id": index} for index, row in enumerate(reversed(rows), 1)],
+        )
+        reject_swapped_index(engine, folder, replacement.read_bytes())
 
         import_vectors = bootstrap.import_vectors
 
@@ -94,6 +138,7 @@ def main():
         with engine.connect() as conn:
             assert tuple(conn.execute(text(bootstrap.PROGRESS)).one())[1:] == (2, 1, 0)
             assert active_snapshot(conn, folder)[2] is None
+        reject_swapped_index(engine, folder, replacement.read_bytes())
 
         bootstrap.bootstrap(engine, folder)
         bootstrap.bootstrap(engine, folder)
@@ -121,7 +166,7 @@ def main():
                 )
                 == 0
             )
-    print("Bootstrap checkpoint, atomic activation, vector reuse, and replay passed")
+    print("Bootstrap checksum rejection, resume, atomic activation, and replay passed")
 
 
 if __name__ == "__main__":

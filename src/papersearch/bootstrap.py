@@ -1,5 +1,9 @@
 import json
+import os
+import re
+from hashlib import file_digest
 
+import pyarrow as pa
 import pyarrow.parquet as pq
 from sqlalchemy import bindparam, text
 
@@ -35,6 +39,35 @@ def published_manifest(folder):
     manifest["recipe"] = RECIPE
     manifest["generation"] = 1
     return manifest
+
+
+def verify_published_files(folder, manifest):
+    files = manifest.get("files")
+    for name in ("lexical.sqlite", "corpus.parquet", "semantic.parquet"):
+        entry = files.get(name) if isinstance(files, dict) else None
+        if not isinstance(entry, dict):
+            raise ValueError(f"Missing or invalid manifest entry for {name}")
+        size = entry.get("bytes")
+        digest = entry.get("sha256")
+        if (
+            type(size) is not int
+            or size < 0
+            or not isinstance(digest, str)
+            or re.fullmatch(r"[0-9a-fA-F]{64}", digest) is None
+        ):
+            raise ValueError(f"Invalid byte size or SHA-256 in manifest for {name}")
+        path = folder / name
+        try:
+            if not path.is_file():
+                raise ValueError(f"Missing published file: {name}")
+            with path.open("rb") as source:
+                if os.fstat(source.fileno()).st_size != size:
+                    raise ValueError(f"Published file size does not match manifest: {name}")
+                actual = file_digest(source, "sha256").hexdigest()
+        except OSError as error:
+            raise ValueError(f"Cannot read published file: {name}") from error
+        if actual != digest.lower():
+            raise ValueError(f"Published file SHA-256 does not match manifest: {name}")
 
 
 def batches(file, columns, completed, position):
@@ -164,6 +197,7 @@ def import_vectors(conn, rows):
 
 def bootstrap(engine, folder):
     manifest = published_manifest(folder)
+    verify_published_files(folder, manifest)
     source_id = manifest["snapshot_id"]
     coverage = manifest["coverage"]
     corpus_columns = (
@@ -178,13 +212,13 @@ def bootstrap(engine, folder):
         pq.ParquetFile(folder / "corpus.parquet") as corpus,
         pq.ParquetFile(folder / "semantic.parquet") as vectors,
     ):
-        if (
-            corpus.metadata.num_rows != coverage["metadata"]
-            or vectors.metadata.num_rows != coverage["semantic"]
-            or vectors.schema_arrow.field("value").type.byte_width != DIM * 4
-            or not (folder / "lexical.sqlite").is_file()
-        ):
-            raise ValueError("Published files do not match the manifest")
+        if corpus.metadata.num_rows != coverage["metadata"]:
+            raise ValueError("Published corpus.parquet row count does not match manifest")
+        if vectors.metadata.num_rows != coverage["semantic"]:
+            raise ValueError("Published semantic.parquet row count does not match manifest")
+        schema = vectors.schema_arrow
+        if "value" not in schema.names or schema.field("value").type != pa.binary(DIM * 4):
+            raise ValueError("Published semantic.parquet has an invalid vector width")
         with engine.begin() as conn:
             state = conn.execute(text(PROGRESS + " FOR UPDATE")).one()
             if state.source_id not in (None, source_id):
