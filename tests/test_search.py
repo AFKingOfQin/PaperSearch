@@ -29,3 +29,17 @@ def test_bm25_alias_field_and_revision(tmp_path):
     assert [(row["paper_id"], row["revision_id"]) for row in hits] == [("a", 10)]
     hits, more = search_lexical(path, "vision language models diagrams", "all", 0, 1)
     assert more and hits[0]["paper_id"] == "a"
+
+
+def test_bm25_uses_published_row_id_for_baseline_revision(tmp_path):
+    path = tmp_path / "published.sqlite"
+    with closing(sqlite3.connect(path)) as conn, conn:
+        conn.execute(
+            "CREATE VIRTUAL TABLE documents USING fts5(title, abstract, paper_id UNINDEXED, event_id UNINDEXED)"
+        )
+        conn.execute(
+            "INSERT INTO documents VALUES('LOOK-M: a system','', 'a', 'opaque')"
+        )
+    hits, more = search_lexical(path, "LOOK-M", "title", 0, 1, baseline=True)
+    assert not more
+    assert [(row["paper_id"], row["revision_id"]) for row in hits] == [("a", 1)]

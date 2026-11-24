@@ -46,7 +46,7 @@ def search_terms(words):
     ), title_phrases if len(groups) > 1 else []
 
 
-def search_lexical(path, query, field, offset, limit):
+def search_lexical(path, query, field, offset, limit, *, baseline=False):
     words = re.findall(r"[^\W_]+", query.lower(), re.UNICODE)
     if not words or len(words) > 32:
         raise ValueError("Enter between 1 and 32 search terms")
@@ -59,7 +59,8 @@ def search_lexical(path, query, field, offset, limit):
     uri = path.resolve().as_uri() + "?mode=ro&immutable=1"
     with closing(sqlite3.connect(uri, uri=True)) as db:
         db.row_factory = sqlite3.Row
-        select = "SELECT paper_id,revision_id,title,bm25(documents,3,1) AS score,rowid"
+        revision = "rowid AS revision_id" if baseline else "revision_id"
+        select = f"SELECT paper_id,{revision},title,bm25(documents,3,1) AS score,rowid"
         matched = " FROM documents WHERE documents MATCH ?"
         args = [expression]
         sql = select + matched

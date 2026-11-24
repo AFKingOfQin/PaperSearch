@@ -1,4 +1,5 @@
 import os
+from string import punctuation
 from uuid import uuid4
 
 import requests
@@ -32,6 +33,46 @@ def call(method, path, **kwargs):
     return result.json()
 
 
+@st.fragment
+def project_menu(projects, project):
+    escaped = str.maketrans({char: "\\" + char for char in punctuation})
+    st.markdown("Project")
+    with st.popover(
+        projects[project]["topic"].translate(escaped),
+        key=f"project-menu-{project}",
+        width="stretch",
+    ):
+        query = st.text_input(
+            "Search projects",
+            placeholder="Search projects",
+            label_visibility="collapsed",
+            live=True,
+        ).casefold()
+        for project_id, item in projects.items():
+            topic = item["topic"]
+            if query not in topic.casefold():
+                continue
+            option, action = st.columns([4, 1], gap=None, wrap=False)
+            if option.button(
+                topic.translate(escaped),
+                key=f"select-{project_id}",
+                type="tertiary",
+                wrap=True,
+            ):
+                st.session_state.project_id = project_id
+                st.rerun()
+            if action.button(
+                "Delete",
+                key=f"delete-{project_id}",
+                type="tertiary",
+                help=f"Delete project {topic.translate(escaped)}",
+            ):
+                call("DELETE", f"/projects/{project_id}")
+                if project_id == project:
+                    st.session_state.pop("project_id", None)
+                st.rerun()
+
+
 with st.sidebar:
     with st.form("project"):
         topic = st.text_input("New project topic")
@@ -44,12 +85,11 @@ with st.sidebar:
             st.rerun()
     projects = {p["project_id"]: p for p in call("GET", "/projects")}
     if projects:
-        project = st.selectbox(
-            "Project",
-            list(projects),
-            format_func=lambda p: projects[p]["topic"],
-            key="project_id",
-        )
+        project = st.session_state.get("project_id")
+        if project not in projects:
+            project = next(iter(projects))
+            st.session_state.project_id = project
+        project_menu(projects, project)
         if projects[project]["criteria"]:
             st.write(projects[project]["criteria"])
         public = os.environ.get("PAPERSEARCH_PUBLIC_API", BASE)

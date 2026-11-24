@@ -16,7 +16,7 @@ def connect():
         host=os.environ.get("MYSQL_HOST", "mysql"),
         database=os.environ.get("MYSQL_DATABASE", "papersearch"),
     )
-    return create_engine(url, pool_pre_ping=True)
+    return create_engine(url, pool_pre_ping=True, hide_parameters=True)
 
 
 def intern_text(conn, title, abstract):
@@ -48,6 +48,11 @@ def intern_text(conn, title, abstract):
 
 
 def apply_revision(conn, revision):
+    source, complete = conn.execute(
+        text("SELECT source_id,complete FROM baseline_import WHERE id=1 FOR SHARE")
+    ).one()
+    if source is not None and not complete:
+        raise RuntimeError("Finish the published snapshot import before consuming updates")
     args = revision_values(revision)
     conn.execute(
         text("""

@@ -41,10 +41,13 @@ class Decision(BaseModel):
     request_id: UUID
 
 
-def check_project(conn, project):
+def check_project(conn, project, *, lock: Literal["SHARE", "UPDATE"] | None = None):
+    query = "SELECT 1 FROM review_projects WHERE project_id=:id"
+    if lock is not None:
+        query += f" FOR {lock}"
     if (
         conn.scalar(
-            text("SELECT 1 FROM review_projects WHERE project_id=:id"),
+            text(query),
             {"id": str(project)},
         )
         is None
@@ -52,12 +55,25 @@ def check_project(conn, project):
         raise HTTPException(404, "Unknown project")
 
 
+@app.get("/health")
+def health():
+    with engine.connect() as conn:
+        conn.execute(text("SELECT 1"))
+    return {"status": "ok"}
+
+
 @app.get("/status")
 def status():
     with engine.connect() as conn:
-        generation, active = active_snapshot(conn, root)
-        metadata = conn.scalar(
-            text("SELECT COUNT(*) FROM papers WHERE current_revision_id IS NOT NULL")
+        generation, _, active = active_snapshot(conn, root)
+        metadata = (
+            active["coverage"]["metadata"]
+            if active and active["generation"] == generation
+            else conn.scalar(
+                text(
+                    "SELECT COUNT(*) FROM papers WHERE current_revision_id IS NOT NULL"
+                )
+            )
         )
     return dict(generation=generation, metadata=metadata, active=active)
 
@@ -80,6 +96,17 @@ def new_project(body: Project):
     return {"project_id": create_project(engine, body.topic.strip(), body.criteria)}
 
 
+@app.delete("/projects/{project}")
+def delete_project(project: UUID):
+    params = {"id": str(project)}
+    with engine.begin() as conn:
+        check_project(conn, project, lock="UPDATE")
+        conn.execute(text("DELETE FROM screening_decisions WHERE project_id=:id"), params)
+        conn.execute(text("DELETE FROM screening_history WHERE project_id=:id"), params)
+        conn.execute(text("DELETE FROM review_projects WHERE project_id=:id"), params)
+    return {"project_id": str(project)}
+
+
 @app.get("/projects/{project}/search")
 def search(
     project: UUID,
@@ -92,7 +119,7 @@ def search(
 ):
     with engine.connect() as conn:
         check_project(conn, project)
-        _, manifest = active_snapshot(conn, root)
+        _, folder, manifest = active_snapshot(conn, root)
     if manifest is None:
         raise HTTPException(503, "Publish a snapshot to enable search")
     snapshot_id = manifest["snapshot_id"]
@@ -102,14 +129,18 @@ def search(
         raise HTTPException(422, "Semantic search uses both title and abstract")
     tokens = None
     try:
-        folder = root / snapshot_id
         if ranker == "semantic":
             hits, more, tokens = semantic_reader.search(
                 folder, manifest, q, offset, limit
             )
         else:
             hits, more = search_lexical(
-                folder / "lexical.sqlite", q, field, offset, limit
+                folder / "lexical.sqlite",
+                q,
+                field,
+                offset,
+                limit,
+                baseline=manifest.get("format_version") == 2,
             )
     except (LookupError, FileNotFoundError) as exc:
         raise HTTPException(503, str(exc)) from exc
@@ -154,7 +185,7 @@ def detail(paper: Paper, revision_id: Annotated[int, Query(gt=0)]):
 @app.put("/projects/{project}/decision")
 def decide(project: UUID, paper: Paper, body: Decision):
     with engine.begin() as conn:
-        check_project(conn, project)
+        check_project(conn, project, lock="SHARE")
         try:
             history = save_decision(
                 conn,

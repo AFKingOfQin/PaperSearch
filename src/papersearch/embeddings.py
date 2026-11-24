@@ -3,7 +3,7 @@ from uuid import uuid4
 
 from sqlalchemy import text
 
-from .encoder import RECIPE, Encoder, eligible, passage
+from .encoder import RECIPE, Encoder, passage
 
 
 def enqueue(conn, text_id):
@@ -14,30 +14,6 @@ def enqueue(conn, text_id):
     """),
         {"id": text_id, "recipe": RECIPE},
     )
-
-
-def backfill(engine):
-    after = ""
-    while True:
-        with engine.begin() as conn:
-            page = conn.execute(
-                text("""
-                SELECT p.paper_id,r.payload,r.text_id FROM papers p
-                JOIN revisions r ON r.revision_id=p.current_revision_id
-                WHERE p.paper_id>:after ORDER BY p.paper_id LIMIT 128
-            """),
-                {"after": after},
-            ).all()
-            if not page:
-                return
-            ids = {
-                row.text_id
-                for row in page
-                if eligible(row.paper_id, json.loads(row.payload))
-            }
-            for text_id in sorted(ids):
-                enqueue(conn, text_id)
-        after = page[-1].paper_id
 
 
 def claim(engine, count, ttl):

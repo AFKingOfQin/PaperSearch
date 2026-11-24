@@ -1,14 +1,17 @@
-name: papersearch-local
+name: papersearch
 
 x-runtime: &runtime
   MYSQL_HOST: mysql
   MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}
   KAFKA_BOOTSTRAP: kafka:9092
   ARTIFACT_DIR: /artifacts
+  PAPERSEARCH_BASELINE_DIR: /baseline
+  PAPERSEARCH_MODEL_DIR: /model
 
 services:
   mysql:
     image: mysql:8.4.13
+    command: ["--innodb-buffer-pool-size=1G", "--innodb-redo-log-capacity=512M"]
     environment:
       MYSQL_DATABASE: papersearch
       MYSQL_USER: papersearch
@@ -20,7 +23,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
-    mem_limit: 1g
+    mem_limit: 3g
   kafka:
     image: apache/kafka:4.1.2
     environment:
@@ -54,37 +57,42 @@ services:
     volumes:
       - ${ARTIFACT_DIR:-./artifacts}:/artifacts
       - ./tests/fixtures:/fixtures:ro
+      - "${BASELINE_DIR:-./artifacts}:/baseline:ro"
     command: ["--help"]
-    mem_limit: 768m
+    mem_limit: 1g
   api:
     profiles: [review]
     build: {context: ., target: review}
     environment: *runtime
     volumes:
-      - ${ARTIFACT_DIR:-./artifacts}:/artifacts:ro
+      - "${ARTIFACT_DIR:-./artifacts}:/artifacts:ro"
+      - "${BASELINE_DIR:-./artifacts}:/baseline:ro"
+      - "${MODEL_DIR:-./artifacts/models/bge-small-en-v1.5}:/model:ro"
     entrypoint: ["python", "-m", "uvicorn", "papersearch.api:app", "--host", "0.0.0.0"]
-    ports: ["127.0.0.1:${REVIEW_API_PORT:-18080}:8000"]
+    ports: ["127.0.0.1:${REVIEW_API_PORT:-18081}:8000"]
     healthcheck:
-      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/status', timeout=3).close()"]
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health', timeout=3).close()"]
       interval: 5s
       timeout: 5s
       retries: 12
-    mem_limit: 1g
+    mem_limit: 2g
   ui:
     profiles: [review]
     build: {context: ., target: review}
     environment:
       PAPERSEARCH_API: http://api:8000
-      PAPERSEARCH_PUBLIC_API: http://127.0.0.1:${REVIEW_API_PORT:-18080}
+      PAPERSEARCH_PUBLIC_API: http://127.0.0.1:${REVIEW_API_PORT:-18081}
       STREAMLIT_BROWSER_GATHER_USAGE_STATS: "false"
     entrypoint: ["python", "-m", "streamlit", "run", "src/papersearch/reviewer.py", "--server.address=0.0.0.0", "--server.headless=true"]
-    ports: ["127.0.0.1:${REVIEW_UI_PORT:-18510}:8501"]
+    ports: ["127.0.0.1:${REVIEW_UI_PORT:-18511}:8501"]
     mem_limit: 512m
   embedding:
     profiles: [embedding]
     build: {context: ., target: review}
     environment: *runtime
-    volumes: ["${ARTIFACT_DIR:-./artifacts}:/artifacts"]
+    volumes:
+      - "${ARTIFACT_DIR:-./artifacts}:/artifacts"
+      - "${MODEL_DIR:-./artifacts/models/bge-small-en-v1.5}:/model:ro"
     command: ["embed"]
     cpus: 2
     mem_limit: 2g

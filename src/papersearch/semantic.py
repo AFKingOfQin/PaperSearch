@@ -26,12 +26,15 @@ class SemanticReader:
             if self.encoder is None:
                 self.encoder = Encoder()
             if self.path != path:
+                self.path = self.ids = self.matrix = None
                 count = manifest["coverage"]["semantic"]
                 ids = np.empty(count, dtype=np.int64)
                 matrix = np.empty((count, DIM), dtype="<f4")
                 start = 0
                 with pq.ParquetFile(path) as file:
-                    for batch in file.iter_batches(batch_size=256):
+                    for batch in file.iter_batches(
+                        batch_size=4096, columns=["row_id", "value"]
+                    ):
                         end = start + len(batch)
                         ids[start:end] = batch.column(0).to_numpy()
                         matrix[start:end] = np.frombuffer(
@@ -42,7 +45,7 @@ class SemanticReader:
                     raise ValueError("Semantic row count does not match the manifest")
                 self.ids, self.matrix, self.path = ids, matrix, path
             vectors, lengths = self.encoder.encode([query], query=True)
-            scores = self.matrix @ vectors[0]
+            scores = np.einsum("ij,j->i", self.matrix, vectors[0])
             order = np.lexsort((self.ids, -scores))
             neighbors = [
                 (int(self.ids[i]), float(scores[i]))
@@ -51,10 +54,15 @@ class SemanticReader:
         uri = (folder / "lexical.sqlite").resolve().as_uri() + "?mode=ro&immutable=1"
         with closing(sqlite3.connect(uri, uri=True)) as index:
             index.row_factory = sqlite3.Row
+            revision = (
+                "rowid AS revision_id"
+                if manifest.get("format_version") == 2
+                else "revision_id"
+            )
             hits = [
                 dict(
                     index.execute(
-                        "SELECT paper_id,revision_id,title FROM documents WHERE rowid=?",
+                        f"SELECT paper_id,{revision},title FROM documents WHERE rowid=?",
                         (row,),
                     ).fetchone(),
                     rank=rank,

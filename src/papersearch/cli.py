@@ -5,8 +5,9 @@ from contextlib import closing
 from pathlib import Path
 
 from . import stream
+from .bootstrap import bootstrap
 from .database import connect
-from .embeddings import backfill, embed
+from .embeddings import embed
 from .history import export_history
 from .snapshot import publish_snapshot, snapshots_root
 
@@ -31,7 +32,7 @@ def main():
     commands.add_parser("snapshot")
     worker = commands.add_parser("embed")
     worker.add_argument("--limit", type=int, default=1024)
-    worker.add_argument("--backfill", action="store_true")
+    commands.add_parser("bootstrap").add_argument("folder", type=Path)
     history = commands.add_parser("export-history")
     history.add_argument("output", type=Path)
     history.add_argument("--after-revision", type=int, default=0)
@@ -50,11 +51,10 @@ def main():
             stream.consume(connect(), args.topic, args.group, args.drain)
         case "snapshot":
             print(json.dumps(publish_snapshot(connect(), snapshots_root())))
+        case "bootstrap":
+            print(json.dumps(bootstrap(connect(), args.folder)["coverage"]))
         case "embed":
-            engine = connect()
-            if args.backfill:
-                backfill(engine)
-            print(json.dumps({"embedded": embed(engine, args.limit)}))
+            print(json.dumps({"embedded": embed(connect(), args.limit)}))
         case "export-history":
             export_history(connect(), args.output, args.after_revision)
         case "lag":

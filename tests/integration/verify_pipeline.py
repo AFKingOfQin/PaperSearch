@@ -15,7 +15,7 @@ from sqlalchemy import text
 
 from papersearch import snapshot, stream
 from papersearch.database import apply_revision, connect
-from papersearch.embeddings import backfill, claim, complete, embed
+from papersearch.embeddings import claim, complete, embed
 from papersearch.encoder import DIM
 from papersearch.history import export_history
 from papersearch.records import parse_record
@@ -91,7 +91,6 @@ def run():
 
     originals = (FIXTURES / "papers.jsonl").read_bytes().splitlines()
     river = parse_record(originals[0], "fixture")
-    backfill(engine)
     embed(engine, 64)
     before = snapshot.publish_snapshot(engine, snapshot.snapshots_root())
     assert before["coverage"]["semantic"] == before["coverage"]["lexical"] == 3

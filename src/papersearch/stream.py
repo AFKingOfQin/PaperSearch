@@ -171,6 +171,20 @@ def apply_delivery(engine, record, group):
             )
         return "rejected"
     with engine.begin() as conn:
+        inserted = conn.execute(
+            text("""
+                INSERT IGNORE INTO processed_deliveries(group_id,topic,partition_id,offset_id)
+                VALUES(:group,:topic,:part,:offset)
+            """),
+            dict(
+                group=group,
+                topic=record.topic,
+                part=record.partition,
+                offset=record.offset,
+            ),
+        )
+        if not inserted.rowcount:
+            return "duplicate"
         return apply_revision(conn, revision)[1]
 
 

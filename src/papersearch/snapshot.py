@@ -9,6 +9,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from sqlalchemy import text
 
+from .bootstrap import published_manifest
 from .encoder import DIM, MAX_TOKENS, RECIPE, eligible
 
 STR = pa.string()
@@ -58,12 +59,25 @@ def pages(conn):
 
 def active_snapshot(conn, root):
     state = conn.execute(
-        text("SELECT generation,active_snapshot FROM pipeline_state WHERE id=1")
+        text("""
+            SELECT generation,active_snapshot,source_id
+            FROM pipeline_state CROSS JOIN baseline_import
+            WHERE pipeline_state.id=1 AND baseline_import.id=1
+        """)
     ).one()
     if state.active_snapshot is None:
-        return state.generation, None
-    path = root / state.active_snapshot / "manifest.json"
-    return state.generation, json.loads(path.read_text(encoding="utf-8"))
+        return state.generation, None, None
+    if state.active_snapshot == state.source_id:
+        folder = Path(os.environ["PAPERSEARCH_BASELINE_DIR"])
+        manifest = published_manifest(folder)
+        if manifest["snapshot_id"] != state.source_id:
+            raise RuntimeError(
+                "Mount the published snapshot used to bootstrap this database"
+            )
+        return state.generation, folder, manifest
+    folder = root / state.active_snapshot
+    manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+    return state.generation, folder, manifest
 
 
 def publish_snapshot(engine, root):
@@ -83,6 +97,15 @@ def publish_snapshot(engine, root):
         state = conn.execute(
             text("SELECT generation,active_snapshot FROM pipeline_state WHERE id=1")
         ).one()
+        importing = conn.scalar(
+            text(
+                "SELECT source_id IS NOT NULL AND NOT complete FROM baseline_import WHERE id=1 FOR SHARE"
+            )
+        )
+        if importing:
+            raise RuntimeError(
+                "Finish the published snapshot import before publishing updates"
+            )
         index.execute("""
             CREATE VIRTUAL TABLE documents USING fts5(
                 title, abstract, paper_id UNINDEXED, revision_id UNINDEXED, tokenize='unicode61'
@@ -135,6 +158,14 @@ def publish_snapshot(engine, root):
     (staging / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     staging.rename(root / snapshot_id)
     with engine.begin() as conn:
+        if conn.scalar(
+            text(
+                "SELECT source_id IS NOT NULL AND NOT complete FROM baseline_import WHERE id=1 FOR SHARE"
+            )
+        ):
+            raise RuntimeError(
+                "Finish the published snapshot import before publishing updates"
+            )
         updated = conn.execute(
             text("""
             UPDATE pipeline_state SET active_snapshot=:new

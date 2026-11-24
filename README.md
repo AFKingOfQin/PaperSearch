@@ -1,50 +1,46 @@
 # PaperSearch
 
-PaperSearch is a local paper-screening app. Kafka delivers arXiv metadata updates, MySQL keeps revision and decision history, and published SQLite and Parquet snapshots support BM25 and CPU semantic search. A local Spark job independently merges revision histories.
+PaperSearch is a local arXiv screening app. Kafka carries metadata updates, MySQL stores revisions and screening decisions, and SQLite FTS5 and Parquet snapshots support BM25 and CPU semantic search. A separate local Spark job merges revision histories.
 
-## Run the offline fixture
+## Start with the published collection
 
-Use Docker Desktop with Linux containers and Docker Compose. The initial image builds need network access. In PowerShell from the repo root:
+Use Docker Desktop in Linux-container mode. Initial image builds need network access. From this repository in PowerShell:
 
 ```powershell
 Copy-Item .env.example .env
-docker compose up -d --wait mysql kafka
+Add-Content .env 'BASELINE_DIR=D:/PaperSearch-M5/derived/snapshots/c0e77a02d4d94f858ff8c35fe1adbeac'
+Add-Content .env 'MODEL_DIR=D:/PaperSearch-M5/models/bge-small-en-v1.5'
 docker compose build cli api ui
+docker compose up -d --wait mysql kafka
 docker compose run --rm --no-deps --entrypoint alembic cli upgrade head
-docker compose run --rm --no-deps cli topic papers
-$batch = docker compose run --rm --no-deps cli archive /fixtures/papers.jsonl --format fixture
-docker compose run --rm --no-deps cli publish papers $batch
-docker compose run --rm --no-deps cli consume papers --drain
-docker compose run --rm --no-deps cli snapshot
+docker compose run --rm --no-deps cli bootstrap /baseline
 docker compose up -d --wait api ui
 ```
 
-Open the [reviewer](http://127.0.0.1:18510). Create a project, search for `river`, and save a label and note. The sample has three valid papers and one malformed input. Run `docker compose run --rm --no-deps cli publish papers $batch --replay` followed by `consume papers --drain` to replay the batch. Use `/fixtures/updates.jsonl` in the same archive, publish, consume, and snapshot sequence to see the river revision. The original decision remains in history and is flagged for reconsideration.
+Adjust the paths if the published files or model moved. Bootstrap starts on a fresh database. It imports the metadata, seeds the cache with existing vector bytes, and activates the original index when both imports are complete. Repeat the same command to resume an interrupted import. The SQLite index, Parquet files, and model are mounted read-only. Keep their paths configured while the baseline is active. The first launch uses 3,050,173 BM25 papers and 486,123 semantic papers from Cornell arXiv v287.
 
-For an arXiv JSONL dump, put the file in `artifacts/`, pass its container path under `/artifacts/` to `archive`, and use `--format arxiv`. On a large batch, run `consume papers` in a second terminal while publishing. If the lag limit pauses publication, run the consumer and repeat `publish` on the same archive. Use `lag papers` to view uncommitted records per partition.
+Open the [reviewer](http://127.0.0.1:18511). Create a project and try `LOOK-M` with BM25 or `vision language model KV cache` with semantic search. Open a result to read its abstract and save a label and note. Export the project's decisions as CSV.
 
-If Docker reports exhausted address pools, add an untracked `compose.override.yaml` with an unused local subnet under `networks.default.ipam.config`. Check existing Docker networks and host routes before choosing it. To stop the app and keep its MySQL and Kafka volumes, run `docker compose --profile '*' stop`.
+If Docker has exhausted its default address pools, set an unused subnet under `networks.default.ipam.config` in an ignored `compose.override.yaml`. Check existing Docker networks and host routes first. Stop the app with `docker compose --profile '*' stop`.
 
-## Enable CPU semantic search
+## Import updates
 
-Place `model.onnx` from the `onnx/` directory and `tokenizer.json` in `artifacts/models/bge-small-en-v1.5/`. The application uses the pinned CPU recipe and loads these files locally. [BGE model files](https://huggingface.co/BAAI/bge-small-en-v1.5/tree/5c38ec7c405ec4b44b94cc5a9bb96e735b38267a)
+Put the JSONL in `artifacts/` and supply its container path. Run the consumer concurrently when publishing a large batch.
 
 ```powershell
-docker compose build embedding
-docker compose run --rm --no-deps embedding embed --limit 1024
+docker compose run --rm --no-deps cli topic papers
+$batch = docker compose run --rm --no-deps cli archive /artifacts/updates.jsonl --format arxiv
+docker compose run --rm --no-deps cli publish papers $batch
+docker compose run --rm --no-deps cli consume papers --drain
 docker compose run --rm --no-deps cli snapshot
 ```
 
-Select **semantic** in the reviewer. New eligible revisions queue automatically. Use `embed --backfill` when adding a recipe to a database that already has rows. Each run processes a bounded number of jobs. The reviewer displays current, lexical, and semantic counts.
+If the lag limit pauses publication, drain the group and repeat `publish` on the same archive. `lag papers` reports uncommitted records per partition. For replay after a topic is recreated, use a fresh topic and group.
 
-## Spark and tests
+An eligible revision queues its title and abstract when the model cache lacks that text. To process pending changes, run `docker compose build embedding`, then `docker compose run --rm --no-deps embedding embed --limit 1024` and publish a new snapshot. The CPU model uses the pinned [BGE recipe](https://huggingface.co/BAAI/bge-small-en-v1.5/tree/5c38ec7c405ec4b44b94cc5a9bb96e735b38267a).
 
-Export full history with `docker compose run --rm --no-deps cli export-history /artifacts/batch/base.parquet`. Supply this and a Parquet export of incoming revisions to Spark. For a delta from the same database, stop ingestion before taking the base export and recording its maximum revision ID, then pass that ID to `export-history --after-revision` after the next import. Revision IDs are local to each database. The merge compares normalized contents.
+## Develop with the small fixture
 
-```powershell
-docker compose run --rm --no-deps spark --master 'local[2]' --driver-memory 1g --conf spark.sql.shuffle.partitions=4 --conf spark.ui.enabled=false /jobs/spark_merge.py /artifacts/batch/base.parquet /artifacts/batch/updates.parquet /artifacts/batch/merged
-python -m pip install -e '.[test]'
-python -m pytest
-```
+Use a fresh Compose project and a separate artifact directory, for example by setting `$env:COMPOSE_PROJECT_NAME='papersearch-fixture'` and `$env:ARTIFACT_DIR='./artifacts/fixture'`. Set unused reviewer ports if the populated app is running. After migrating, skip bootstrap and follow the update workflow with `/fixtures/papers.jsonl --format fixture`. The input has three papers and one malformed line. To revise the river paper, use `/fixtures/updates.jsonl --format fixture`.
 
-The [architecture guide](docs/architecture.md) describes the data flow, CS544 concepts, and real-service verification.
+Run unit tests with `python -m pip install -e '.[review,test]'` and `python -m pytest`. See the [architecture and integration guide](docs/architecture.md) for Spark and recovery checks.
