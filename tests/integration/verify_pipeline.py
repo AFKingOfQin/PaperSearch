@@ -16,7 +16,7 @@ from sqlalchemy import text
 from papersearch import snapshot, stream
 from papersearch.database import apply_revision, connect
 from papersearch.embeddings import claim, complete, embed
-from papersearch.encoder import DIM
+from papersearch.encoder import DIM, RECIPE
 from papersearch.history import export_history
 from papersearch.records import parse_record
 
@@ -41,6 +41,17 @@ def live_scalar(engine, statement):
 def apply(engine, revision):
     with engine.begin() as conn:
         return apply_revision(conn, revision)
+
+
+def queued_jobs(engine, revision_id):
+    with engine.connect() as conn:
+        return conn.scalar(
+            text("""
+                SELECT COUNT(*) FROM embeddings e JOIN revisions r USING(text_id)
+                WHERE r.revision_id=:revision AND e.recipe=:recipe AND e.vector IS NULL
+            """),
+            {"revision": revision_id, "recipe": RECIPE},
+        )
 
 
 def verify_review():
@@ -128,9 +139,24 @@ def run():
     embeddings_before = live_scalar(engine, "SELECT COUNT(*) FROM embeddings")
     apply(engine, replace(river, paper_id="fixture:copy"))
     assert live_scalar(engine, "SELECT COUNT(*) FROM embeddings") == embeddings_before
-    conflict = replace(river, paper_id="fixture:conflict")
-    old, _ = apply(engine, conflict)
-    apply(engine, replace(conflict, version_rank=2))
+    conflict = replace(
+        river,
+        paper_id="fixture:conflict",
+        payload=replace(river.payload, title="Wetland restoration and frog habitats"),
+    )
+    newer = replace(
+        conflict,
+        version_rank=2,
+        payload=replace(conflict.payload, title="Forest restoration and bird habitats"),
+    )
+    latest, result = apply(engine, newer)
+    assert result == "applied" and queued_jobs(engine, latest) == 1
+    old, result = apply(engine, conflict)
+    assert result == "stale" and queued_jobs(engine, old) == 0
+    conflict_winner = (
+        "SELECT current_revision_id FROM papers WHERE paper_id='fixture:conflict'"
+    )
+    assert live_scalar(engine, conflict_winner) == latest
     withdrawn = replace(river, paper_id="fixture:withdrawn")
     apply(engine, withdrawn)
     base_path = ROOT / "batch" / "base.parquet"
@@ -138,16 +164,19 @@ def run():
     watermark = live_scalar(engine, "SELECT MAX(revision_id) FROM revisions")
 
     alter = replace(river.payload, title="A conflicting title")
-    assert (
-        apply(engine, replace(conflict, version_rank=2, payload=alter))[1] == "conflict"
-    )
-    assert (
-        live_scalar(
-            engine,
-            "SELECT current_revision_id FROM papers WHERE paper_id='fixture:conflict'",
-        )
-        == old
-    )
+    competing = replace(newer, payload=alter)
+    competing_id, result = apply(engine, competing)
+    assert result == "conflict"
+    assert live_scalar(engine, conflict_winner) == old
+    assert queued_jobs(engine, old) == 1
+    assert queued_jobs(engine, competing_id) == 0
+    for revision, revision_id in (
+        (newer, latest),
+        (conflict, old),
+        (competing, competing_id),
+    ):
+        assert apply(engine, revision) == (revision_id, "duplicate")
+    assert queued_jobs(engine, old) == 1
     assert apply(engine, replace(withdrawn, payload=alter))[1] == "conflict"
     apply(engine, replace(river, paper_id="fixture:new"))
     update = stream.archive((FIXTURES / "updates.jsonl"), ROOT, "fixture")
@@ -193,6 +222,15 @@ def run():
     assert embed(engine, 64) >= len(jobs)
     after = snapshot.publish_snapshot(engine, snapshot.snapshots_root())
     assert after["coverage"]["semantic"] == after["coverage"]["lexical"]
+    promoted = call(
+        "GET",
+        prefix + "/search",
+        params={"q": conflict.payload.title, "ranker": "semantic"},
+    ).json()["results"]
+    assert any(
+        row["paper_id"] == conflict.paper_id and row["revision_id"] == old
+        for row in promoted
+    )
     verify_review()
     export_history(engine, ROOT / "batch" / "updates.parquet", watermark)
     print(

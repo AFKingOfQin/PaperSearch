@@ -1,3 +1,4 @@
+import json
 import os
 
 from sqlalchemy import create_engine, text
@@ -98,15 +99,22 @@ def apply_revision(conn, revision):
         conn.execute(
             text("UPDATE pipeline_state SET generation=generation+1 WHERE id=1")
         )
+        if winner is not None:
+            if winner == revision_id:
+                winner_text_id = text_id
+                winner_payload = {
+                    "published": revision.payload.published,
+                    "categories": revision.payload.categories,
+                }
+            else:
+                winner_text_id, stored_payload = conn.execute(
+                    text("SELECT text_id,payload FROM revisions WHERE revision_id=:id"),
+                    {"id": winner},
+                ).one()
+                winner_payload = json.loads(stored_payload)
+            if eligible(revision.paper_id, winner_payload):
+                enqueue(conn, winner_text_id)
     if winner == revision_id:
-        if eligible(
-            revision.paper_id,
-            {
-                "published": revision.payload.published,
-                "categories": revision.payload.categories,
-            },
-        ):
-            enqueue(conn, text_id)
         return revision_id, "applied"
     variants = conn.scalar(
         text("""
