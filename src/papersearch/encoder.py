@@ -25,6 +25,10 @@ def passage(title, abstract):
     return title + "\n" + abstract if abstract else title
 
 
+class MissingModelFile(FileNotFoundError):
+    pass
+
+
 class Encoder:
     def __init__(self, directory=None, threads=2):
         import numpy as np
@@ -44,7 +48,7 @@ class Encoder:
         )
         for name in ("tokenizer.json", "model.onnx"):
             if not (directory / name).is_file():
-                raise FileNotFoundError(f"Missing BGE model file: {directory / name}")
+                raise MissingModelFile(f"Missing BGE model file: {directory / name}")
         os.environ["TOKENIZERS_PARALLELISM"] = "false"
         self.tokenizer = Tokenizer.from_file(str(directory / "tokenizer.json"))
         self.tokenizer.no_padding()

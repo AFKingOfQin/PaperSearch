@@ -5,7 +5,11 @@ from threading import Lock
 import numpy as np
 import pyarrow.parquet as pq
 
-from .encoder import DIM, RECIPE, Encoder
+from .encoder import DIM, RECIPE, Encoder, MissingModelFile
+
+
+class SemanticUnavailable(Exception):
+    pass
 
 
 class SemanticReader:
@@ -17,14 +21,17 @@ class SemanticReader:
     def search(self, folder, manifest, query, offset, limit):
         if not query.strip():
             raise ValueError("Enter a search query")
-        if not manifest["coverage"]["semantic"] or manifest.get("recipe") != RECIPE:
-            raise LookupError(
-                "This snapshot has no semantic index. Run the embedding worker and publish again."
-            )
+        if not manifest["coverage"]["semantic"]:
+            raise SemanticUnavailable("The active snapshot has no semantic vectors")
+        if manifest.get("recipe") != RECIPE:
+            raise LookupError("The active snapshot uses an incompatible semantic recipe")
         path = folder / "semantic.parquet"
         with self.lock:
             if self.encoder is None:
-                self.encoder = Encoder()
+                try:
+                    self.encoder = Encoder()
+                except MissingModelFile as exc:
+                    raise SemanticUnavailable(str(exc)) from exc
             if self.path != path:
                 self.path = self.ids = self.matrix = None
                 count = manifest["coverage"]["semantic"]

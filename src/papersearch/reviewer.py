@@ -104,12 +104,31 @@ if active is None:
     st.stop()
 coverage = active["coverage"]
 st.caption(
-    f"{status['metadata']:,} current papers · {coverage['lexical']:,} lexical · {coverage['semantic']:,} semantic"
+    f"{status['metadata']:,} current papers · {coverage['lexical']:,} lexical · {coverage['semantic']:,} semantic vectors"
 )
 if "semantic_eligible" in coverage:
     st.caption(
         f"Semantic index covers {coverage['semantic']:,} of {coverage['semantic_eligible']:,} eligible papers."
     )
+if dates := active.get("semantic_submission_dates"):
+    st.caption(f"Semantic vectors span submissions from {dates[0]} to {dates[1]}.")
+if scope := active.get("semantic_scope"):
+    with st.expander("Semantic date and subject coverage"):
+        for group, label in (("recent", "Recent CS/ML"), ("other", "Historical sample")):
+            if dates := scope.get(f"{group}_dates"):
+                st.caption(f"{label} submissions span {dates[0]} to {dates[1]}.")
+        for cohort in scope.get("cohorts", []):
+            subjects = " + ".join(cohort["categories"])
+            period = f"from {cohort['start']}"
+            if cohort["before"]:
+                period += f" to before {cohort['before']}"
+            st.caption(
+                f"{subjects} {period} · {cohort['indexed']:,} of {cohort['eligible']:,} indexed"
+            )
+        if years := scope.get("recent_years"):
+            st.write("Recent vectors by submission year", years)
+        if categories := scope.get("recent_categories"):
+            st.write("Recent vectors by category (includes cross-listings)", categories)
 if status["generation"] != active["generation"]:
     st.warning("New metadata is available. Search shows the published revisions.")
 if not projects:
@@ -130,7 +149,7 @@ search_key = (project, query, ranker, field)
 if st.session_state.get("search_key") != search_key:
     st.session_state.search_key = search_key
     st.session_state.pop("page", None)
-offset, snapshot = st.session_state.get("page", (0, None))
+offset, snapshot, *previous_ranker = st.session_state.get("page", (0, None))
 page = call(
     "GET",
     prefix + "/search",
@@ -138,6 +157,12 @@ page = call(
         q=query, ranker=ranker, field=field, offset=offset, limit=10, snapshot=snapshot
     ),
 )
+served = page["ranker"]
+if offset and previous_ranker and served != previous_ranker[0]:
+    st.session_state.page = (0, page["snapshot_id"], served)
+    st.rerun()
+if reason := page.get("fallback_reason"):
+    st.warning(f"{reason}. Showing BM25 results.")
 if page["query_truncated"]:
     st.caption("The semantic query was shortened to 128 tokens.")
 hits = {row["revision_id"]: row for row in page["results"]}
@@ -146,10 +171,10 @@ if not hits:
     st.stop()
 previous, following = st.columns(2)
 if previous.button("Previous page", disabled=offset == 0):
-    st.session_state.page = (offset - 10, page["snapshot_id"])
+    st.session_state.page = (offset - 10, page["snapshot_id"], served)
     st.rerun()
 if following.button("Next page", disabled=not page["has_more"]):
-    st.session_state.page = (offset + 10, page["snapshot_id"])
+    st.session_state.page = (offset + 10, page["snapshot_id"], served)
     st.rerun()
 
 chosen = st.radio(

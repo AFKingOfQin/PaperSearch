@@ -19,7 +19,7 @@ from .reviews import (
     read_decision,
     save_decision,
 )
-from .semantic import SemanticReader
+from .semantic import SemanticReader, SemanticUnavailable
 from .snapshot import active_snapshot, snapshots_root
 
 app = FastAPI(title="PaperSearch")
@@ -127,13 +127,17 @@ def search(
         raise HTTPException(409, "A new snapshot is active. Start the search again.")
     if ranker == "semantic" and field != "all":
         raise HTTPException(422, "Semantic search uses both title and abstract")
-    tokens = None
+    served = ranker
+    tokens = fallback_reason = None
     try:
         if ranker == "semantic":
-            hits, more, tokens = semantic_reader.search(
-                folder, manifest, q, offset, limit
-            )
-        else:
+            try:
+                hits, more, tokens = semantic_reader.search(
+                    folder, manifest, q, offset, limit
+                )
+            except SemanticUnavailable as exc:
+                served, fallback_reason = "bm25", str(exc)
+        if served == "bm25":
             hits, more = search_lexical(
                 folder / "lexical.sqlite",
                 q,
@@ -151,7 +155,9 @@ def search(
         has_more=more,
         snapshot_id=snapshot_id,
         coverage=manifest["coverage"],
-        ranker=ranker,
+        ranker=served,
+        requested_ranker=ranker,
+        fallback_reason=fallback_reason,
         query_truncated=tokens is not None and tokens > MAX_TOKENS,
     )
 
