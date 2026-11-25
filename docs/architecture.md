@@ -10,10 +10,14 @@ This maps to CS544 concepts in container orchestration, SQL concurrency, Kafka p
 
 ## Run the integration check
 
-Use a fresh Compose project and empty artifact directory with the local model files present. Set `COMPOSE_PROJECT_NAME` and `ARTIFACT_DIR` to those test locations if your usual app is populated. Follow the README setup through building the images, migrating and starting the API. The integration test handles its own fixture import and snapshot construction. Build the embedding image before running the check.
+Use a fresh Compose project and empty artifact directory with the [model files from the README](../README.md#enable-semantic-search-in-the-demo) present. Set `COMPOSE_PROJECT_NAME`, `ARTIFACT_DIR`, and the reviewer ports if your usual app is running. Copy `.env.example` to `.env` if needed, then build the images, start MySQL and Kafka, run the migrations, and start the API. The integration test imports its own fixtures and builds its own snapshot.
 
 ```powershell
 $tests = (Resolve-Path tests).Path
+docker compose build cli api embedding
+docker compose up -d --wait mysql kafka
+docker compose run --rm --no-deps --entrypoint alembic cli upgrade head
+docker compose up -d --wait api
 docker compose run --rm --no-deps -v "${tests}:/tests:ro" --entrypoint python embedding /tests/integration/verify_pipeline.py pipeline
 docker compose restart mysql kafka api
 docker compose up -d --wait mysql kafka api
